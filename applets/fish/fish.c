@@ -151,10 +151,13 @@ static void show_help(FishApplet* fish, const char* link_id)
 		uri = g_strdup_printf ("help:%s/%s", FISH_HELP_DOC, link_id);
 	else
 		uri = g_strdup_printf ("help:%s", FISH_HELP_DOC);
-
+#if GTK_CHECK_VERSION (3, 22, 0)
+	gtk_show_uri_on_window (NULL, uri, 
+			  gtk_get_current_event_time (), &error);
+#else
 	gtk_show_uri (gtk_widget_get_screen (GTK_WIDGET (fish)), uri,
 		      gtk_get_current_event_time (), &error);
-
+#endif
 	g_free (uri);
 
 	if (error &&
@@ -1331,9 +1334,17 @@ static gboolean load_fish_image(FishApplet* fish)
 	return TRUE;
 }
 
+static gboolean
+update_pixmap_in_idle (gpointer data)
+{
+	update_pixmap (FISH_APPLET (data));
+	return FALSE;
+}
+
 static void update_pixmap(FishApplet* fish)
 {
 	GtkWidget     *widget = fish->drawing_area;
+	GtkRequisition prev_requisition;
 	GtkAllocation  allocation;
 	int            width  = -1;
 	int            height = -1;
@@ -1362,6 +1373,8 @@ static void update_pixmap(FishApplet* fish)
 	pixbuf_width  = gdk_pixbuf_get_width  (fish->pixbuf);
 	pixbuf_height = gdk_pixbuf_get_height (fish->pixbuf);
 
+	prev_requisition = fish->requisition;
+
 	if (fish->orientation == MATE_PANEL_APPLET_ORIENT_UP ||
 	    fish->orientation == MATE_PANEL_APPLET_ORIENT_DOWN) {
 		height = allocation.height;
@@ -1372,7 +1385,7 @@ static void update_pixmap(FishApplet* fish)
 		if (!rotate) {
 			width = allocation.width * fish->n_frames;
 			height = pixbuf_height * ((gdouble) width / pixbuf_width);
-			fish->requisition.width = width;
+			fish->requisition.width = allocation.width;
 			fish->requisition.height = height;
 		} else {
 			width = allocation.width;
@@ -1382,9 +1395,12 @@ static void update_pixmap(FishApplet* fish)
 		}
 	}
 
-	gtk_widget_set_size_request (fish->drawing_area,
-								 fish->requisition.width,
-								 fish->requisition.height);
+	if (prev_requisition.width  != fish->requisition.width ||
+	    prev_requisition.height != fish->requisition.height) {
+		gtk_widget_set_size_request (widget,
+					     fish->requisition.width,
+					     fish->requisition.height);
+		}
 
 	g_assert (width != -1 && height != -1);
 
@@ -1482,15 +1498,12 @@ static gboolean fish_applet_draw(GtkWidget* widget, cairo_t *cr, FishApplet* fis
 
 static void fish_applet_size_allocate(GtkWidget* widget, GtkAllocation* allocation, FishApplet* fish)
 {
-	GtkAllocation widget_allocation;
-
-	gtk_widget_get_allocation (widget, &widget_allocation);
-
-	if (widget_allocation.width  != fish->prev_allocation.width ||
-	    widget_allocation.height != fish->prev_allocation.height)
-		update_pixmap (fish);
+	if (allocation->width  == fish->prev_allocation.width &&
+	    allocation->height == fish->prev_allocation.height)
+		return;
 
 	fish->prev_allocation = *allocation;
+	g_idle_add (update_pixmap_in_idle, fish);
 }
 
 static void fish_applet_realize(GtkWidget* widget, FishApplet* fish)
